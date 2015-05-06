@@ -8,6 +8,7 @@
  * Rojo a 5V o 3.3 de la placa Launchpad
  * Conexión UART  9600 baudios, 8bits,sin paridad,1 stop bit
  * */
+
 #include <msp430.h>
 unsigned int iStep=0;	//Índice de paso
 unsigned char cR='\0';	//Caracter leído
@@ -19,56 +20,50 @@ const unsigned int vel[10]={1000,2000,3000,4000,5000,6000,7000,8000,9000,900}; /
 char uart_getc();	//	Obtener un caracter
 void ejecutarComando(unsigned char comando[]);
 
-
 int main(void)
 {
   WDTCTL = WDTPW + WDTHOLD;                 // Stop WDT
   if (CALBC1_1MHZ==0xFF){					// If calibration constant erased
     while(1);                               // do not load, trap CPU!!
   }
+  /*Configurar puertos*/
+  P2DIR = 0x0F;			//P2 como salida en sus 4 bajos
+  P2OUT = 0;			//Saco un 0 por el puerto 2
+  P1DIR = BIT6;			//P1.6 = PWM
+  P1SEL = BIT1 + BIT2 + BIT6 ;              // P1.1 = RXD, P1.2=TX, P1.6=PWM
+  P1SEL2 = BIT1 + BIT2 ;                    // P1.1 = RXD, P1.2=TXD
 
-  unsigned char comando[2];		//Primer Caracter:Sentido de giro; Segundo Caracter: velocidad; Ejemplo: H2
-  iR=2;
+  /*Configurar timmer TA0*/
+  TA0CTL = TASSEL_2+MC_1;	//Reloj interno, modo de cuenta a TACCR0
+  TA0CCTL1 = OUTMOD_7;		//Salida Reset/Set para TA0.1
 
-  /*Esto es para controlar los pasos del motor*/
-  TACTL |= TASSEL_2+MC_1;		//Reloj SMCLK, modo de cuenta a TACCR0, Interrupción para el motor
-  TA1CTL |= TASSEL_2+ID_0+MC_1;	//RELOJ SMCLK,DIVISOR=1,MODE=UP
-
-  /*Esto es para manejar el PWM, Frecuencia de 1kHz, con un DC de 10%*/
-  TA1CCTL1 |= OUTMOD_7;			//Salida Reset/Set
-  TA1CCR0 = 1000;			//Frecuencia de 1kHz
-
-
-  /*Para la salida con PWM*/
-  P2DIR |= 0xFF;							//Todo el P2 Como Salida
-  P2SEL |= BIT6;							//P2.0 salida pwm
-  P2OUT = 0;								//Saco un 0 por el puerto 2
-
-  /*Para la lectura del ADC10 no es necesario utilizar el P1SEL ni P1SEL2 */
-  ADC10CTL0|=ADC10ON+ADC10IE+MSC;				//Conversor encendido, interrupción habilitada;
-  ADC10CTL1|=INCH_5+ADC10SSEL_3+CONSEQ_2;	//Canal 5 de entrada, fuente de reloj SMCLK
-  ADC10AE0|=BIT5;							//Habilitación del A5 como entrada analógica
-  ADC10CTL0|=ENC+ADC10SC;							//Se captura una vez el adc10
-
-  /*Configuración de la UART*/
+ /*Configurar reloj*/
   DCOCTL = 0;                               // Select lowest DCOx and MODx settings
   BCSCTL1 = CALBC1_1MHZ;                    // Set DCO
   DCOCTL = CALDCO_1MHZ;						// Set DCO
-  P1SEL = BIT1 + BIT2 ;                     // P1.1 = RXD, P1.2=TX
-  P1SEL2 = BIT1 + BIT2 ;                    // P1.1 = RXD, P1.2=TXD
+
+  /*Configurar uart*/
   UCA0CTL1 |= UCSSEL_2;                     // SMCLK
   UCA0BR0 = 104;                            // 1MHz 9600
   UCA0BR1 = 0;                              // 1MHz 9600
   UCA0MCTL = UCBRS0;                        // Modulation UCBRSx = 1
   UCA0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+  unsigned char comando[2];		//Primer Caracter:Sentido de giro; Segundo Caracter: velocidad; Ejemplo: H2
 
+  /*Configurar ADC10*/
+  /*Para la lectura del ADC10 no es necesario utilizar el P1SEL ni P1SEL2 */
+  ADC10CTL0|=ADC10ON+ADC10IE+MSC;			//Conversor encendido, interrupción habilitada, Modo Continuo;
+  ADC10CTL1|=INCH_3+ADC10SSEL_3+CONSEQ_2;	//Canal 3 de entrada, fuente de reloj SMCLK
+  ADC10AE0=BIT3;							//Habilitación del A3 como entrada analógica
+  ADC10CTL0|=ENC+ADC10SC;					//Se captura una vez el adc10
 
   __bis_SR_register(GIE);      		 		// interrupts enabled
 
   while(1){
-
 	  if(iR<2){
+
 	  comando[iR-1]=uart_getc();
+
 	  }
 	  else{
 		  ejecutarComando(comando);
@@ -80,7 +75,7 @@ int main(void)
 char uart_getc(void){
 	cR='\0';
 	IE2|=UCA0RXIE;
-	while(cR=='\0');
+ 	while(cR=='\0');
 	return cR;
 
 }
@@ -97,13 +92,14 @@ void ejecutarComando(unsigned char _comando[]){
 		TACTL|=TAIE;		//Encendemos la interrupción de timer, limpiamos el TA0R
 		break;
 	case 'S':	//Stop, detener el motor
+		TA0CCR0=0;
 		TACTL&=~TAIE;		//Limpiamos la interrupción del timer
 		TACTL&=~TAIFG;	//Se limpia el flag de interrupción de timer
 		iStep=0;
 		break;
 	}
 	if(_comando[0]!='S'){
-		if(_comando[1]>='0' && _comando[1]<='3'){	//Si el char corresponde a un número
+		if(_comando[1]>='0' && _comando[1]<='9'){	//Si el char corresponde a un número
 			TACCR0=vel[_comando[1]-48];		//Le damos a TACCR0 la velocidad de ese número en el arreglo
 		}
 	}
@@ -124,16 +120,11 @@ __interrupt void recep_isr(void){
 #pragma vector=TIMER0_A1_VECTOR
 __interrupt void timer_isr (void){	//ISR de timer
 	iStep=(iStep<8)?iStep:0;		//Si el índice de pasos es menor a 8, no se altera, si no, se vuelve a 0
-	P2OUT=steps[iStep++]>>4;		//Se saca el paso en el puerto 2
+	P2OUT=steps[iStep++];			//Se saca el paso en el puerto 2
 	TACTL &= ~ TAIFG;				//Se limpia el flag de interrupción de timer
 }
-
 #pragma vector=ADC10_VECTOR
 __interrupt void adc10_isr(void){//ISR del ADC10
-	/*Si nuestro valor leído es mayor a 1000, la cuenta de TA1CCR1 se queda en 1000
-	 * de lo contrario, se pasa directamente el valor de la conversión guardado
-	 * en el registro ADC10MEM
-	 */
-	TA1CCR1=(ADC10MEM>=1000)?1000:ADC10MEM;
+	TA0CCR1 = ADC10MEM;
 	ADC10CTL0&=~ADC10IFG;
 }
