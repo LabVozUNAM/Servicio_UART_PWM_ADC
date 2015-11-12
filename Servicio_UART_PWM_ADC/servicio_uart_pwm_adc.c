@@ -57,7 +57,7 @@ int main(void)
   ADC10AE0=BIT3;							//Habilitación del A3 como entrada analógica
   ADC10CTL0|=ENC+ADC10SC;					//Se captura una vez el adc10
 
-  __bis_SR_register(GIE);      		 		// interrupts enabled
+  __bis_SR_register(GIE);      		 		// Activacion de interrupciones
 
   while(1){
 	  if(iR<2){
